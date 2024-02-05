@@ -4,18 +4,16 @@
 1/2 документ плагина
 """
 import datetime
-import itertools
 import logging
-import os
 import re
 import time
 
 import dateutil.parser
+from selenium.common import NoSuchElementException
 from selenium.webdriver.chrome.webdriver import WebDriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
-from selenium.webdriver.support.ui import WebDriverWait, Select
-from selenium.common import NoSuchElementException
+from selenium.webdriver.support.ui import WebDriverWait
 
 from src.spp.types import SPP_document
 
@@ -37,7 +35,7 @@ class SWIFT:
 
     HOST = 'https://www.swift.com/news-events/'
 
-    def __init__(self, webdriver: WebDriver, *args, **kwargs):
+    def __init__(self, webdriver: WebDriver, max_count_documents: int = 50, *args, **kwargs):
         """
         Конструктор класса парсера
 
@@ -46,6 +44,7 @@ class SWIFT:
         """
         # Обнуление списка
         self._content_document = []
+        self.max_count_documents = max_count_documents
 
         self.driver = webdriver
 
@@ -86,17 +85,9 @@ class SWIFT:
         links = []
         links.extend(self._contain_links_from_url(release_url))
         links.extend(self._contain_links_from_url(news_url))
-        print(links)
 
         for link in links:
             self._parse_news_page(link)
-
-
-        ...
-
-        # Логирование найденного документа
-        # self.logger.info(self._find_document_text_for_logger(document))
-
         # ---
         # ========================================
 
@@ -116,19 +107,23 @@ class SWIFT:
 
         # Вернуть назад
         # for page in range(0, last_page+1):
-        for page in range(0, 12 if last_page+1 >= 12 else last_page+1):  # для теста
+        for page in range(0, 10 if last_page+1 >= 10 else last_page+1):  # для теста
             if page > 0:
                 self._initial_access_source(f'{url}?page={page}')
 
             cards = self.driver.find_elements(By.CLASS_NAME, 'card')                # Карточки со страницы
             for card in cards:
+                # Ограничение парсинга до установленного параметра self.max_count_documents
+                if len(links) >= self.max_count_documents:
+                    self.logger.debug('Max count documents reached')
+                    return links
+
                 try:
                     link = card.find_element(By.TAG_NAME, 'a').get_attribute('href')
                     links.append(link)
                     self.logger.debug(f'Prepare link {link}')
                 except Exception as e:
-                    self.logger.debug(f'Card cannot read in {self.driver.current_url}')
-
+                    self.logger.debug(f'Card cannot read in {self.driver.current_url}. Error: {e}')
         return links
 
     def _parse_news_page(self, url: str):
@@ -202,53 +197,3 @@ class SWIFT:
         :rtype:
         """
         return f"Find document | name: {doc.title} | link to web: {doc.web_link} | publication date: {doc.pub_date}"
-
-    @staticmethod
-    def some_necessary_method():
-        """
-        Если для парсинга нужен какой-то метод, то его нужно писать в классе.
-
-        Например: конвертация дат и времени, конвертация версий документов и т. д.
-        :return:
-        :rtype:
-        """
-        ...
-
-    @staticmethod
-    def nasty_download(driver, path: str, url: str) -> str:
-        """
-        Метод для "противных" источников. Для разных источника он может отличаться.
-        Но основной его задачей является:
-            доведение driver селениума до файла непосредственно.
-
-            Например: пройти куки, ввод форм и т. п.
-
-        Метод скачивает документ по пути, указанному в driver, и возвращает имя файла, который был сохранен
-        :param driver: WebInstallDriver, должен быть с настроенным местом скачивания
-        :_type driver: WebInstallDriver
-        :param url:
-        :_type url:
-        :return:
-        :rtype:
-        """
-
-        with driver:
-            driver.set_page_load_timeout(40)
-            driver.get(url=url)
-            time.sleep(1)
-
-            # ========================================
-            # Тут должен находится блок кода, отвечающий за конкретный источник
-            # -
-            # ---
-            # ========================================
-
-            # Ожидание полной загрузки файла
-            while not os.path.exists(path + '/' + url.split('/')[-1]):
-                time.sleep(1)
-
-            if os.path.isfile(path + '/' + url.split('/')[-1]):
-                # filename
-                return url.split('/')[-1]
-            else:
-                return ""
