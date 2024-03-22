@@ -35,7 +35,7 @@ class SWIFT:
 
     HOST = 'https://www.swift.com/news-events/'
 
-    def __init__(self, webdriver: WebDriver, max_count_documents: int = 50, *args, **kwargs):
+    def __init__(self, webdriver: WebDriver, url: str, max_count_documents: int = None, last_document: SPP_document = None, *args, **kwargs):
         """
         Конструктор класса парсера
 
@@ -44,11 +44,14 @@ class SWIFT:
         """
         # Обнуление списка
         self._content_document = []
-        self.max_count_documents = max_count_documents
-
         self.driver = webdriver
+        self._max_count_documents = max_count_documents
+        self._last_document = last_document
+        if url:
+            self.URL = url
+        else:
+            raise ValueError('url must be a link to the swift topic main page')
 
-        # Логер должен подключаться так. Вся настройка лежит на платформе
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.debug(f"Parser class init completed")
         self.logger.info(f"Set source: {self.SOURCE_NAME}")
@@ -61,8 +64,12 @@ class SWIFT:
         :rtype:
         """
         self.logger.debug("Parse process start")
-        self._parse()
-        self.logger.debug("Parse process finished")
+        try:
+            self._parse()
+        except Exception as e:
+            self.logger.debug(f'Parsing stopped with error: {e}')
+        else:
+            self.logger.debug("Parse process finished")
         return self._content_document
 
     def _parse(self):
@@ -74,98 +81,86 @@ class SWIFT:
         # HOST - это главная ссылка на источник, по которому будет "бегать" парсер
         self.logger.debug(F"Parser enter to {self.HOST}")
 
-        # ========================================
-        # Тут должен находится блок кода, отвечающий за парсинг конкретного источника
-        # -
-        release_url = 'https://www.swift.com/news-events/press-releases'
-        news_url = 'https://www.swift.com/news-events/news'
-
         self.driver.set_page_load_timeout(40)
 
         links = []
-        links.extend(self._contain_links_from_url(release_url))
-        links.extend(self._contain_links_from_url(news_url))
+        for page in self._encounter_pages():
+            # Получение URL новой страницы
+            for link in self._collect_doc_links(page):
+                # Запуск страницы и ее парсинг
+                self._parse_news_page(link)
 
         for link in links:
             self._parse_news_page(link)
         # ---
         # ========================================
 
-    def _contain_links_from_url(self, url: str) -> list:
-        links = []
-        last_page = 0
+    def _encounter_pages(self) -> str:
+        _base = self.URL
+        _params = '?page='
+        page = 1
+        while True:
+            url = _base + _params + str(page)
+            page += 1
+            yield url
 
-        self._initial_access_source(url, 5)
+    def _collect_doc_links(self, url: str) -> list:
+        links = []
 
         try:
-            link_to_last_page = self.driver.find_element(By.CLASS_NAME, 'pager__item--last').find_element(By.TAG_NAME, 'a').get_attribute('href')
-            last_page = int(re.match(r'.*?page=(\d+)', link_to_last_page).groups()[0])
-            self.logger.debug(f'Last page is {last_page}')
-        except:
-            self.logger.error('Last page not find')
-            return links
+            self._initial_access_source(url)
+        except Exception as e:
+            raise NoSuchElementException() from e
 
-        # Вернуть назад
-        # for page in range(0, last_page+1):
-        for page in range(0, 10 if last_page+1 >= 10 else last_page+1):  # для теста
-            if page > 0:
-                self._initial_access_source(f'{url}?page={page}')
-
-            cards = self.driver.find_elements(By.CLASS_NAME, 'card')                # Карточки со страницы
-            for card in cards:
-                # Ограничение парсинга до установленного параметра self.max_count_documents
-                if len(links) >= self.max_count_documents:
-                    self.logger.debug('Max count documents reached')
-                    return links
-
-                try:
-                    link = card.find_element(By.TAG_NAME, 'a').get_attribute('href')
-                    links.append(link)
-                    self.logger.debug(f'Prepare link {link}')
-                except Exception as e:
-                    self.logger.debug(f'Card cannot read in {self.driver.current_url}. Error: {e}')
+        cards = self.driver.find_elements(By.CLASS_NAME, 'card')  # Карточки со страницы
+        for card in cards:
+            try:
+                link = card.find_element(By.TAG_NAME, 'a').get_attribute('href')
+                links.append(link)
+                self.logger.debug(f'Prepare link {link}')
+            except Exception as e:
+                self.logger.debug(f'Card cannot read in {self.driver.current_url}. Error: {e}')
         return links
 
     def _parse_news_page(self, url: str):
-        self._initial_access_source(url, 3)
         self.logger.debug(f'Start parse document by url: {url}')
 
-        document = SPP_document(
-            None,
-            None,
-            None,
-            None,
-            url,
-            None,
-            {},
-            None,
-            datetime.datetime.now()
-        )
-
         try:
-            content = self.driver.find_element(By.CLASS_NAME, 'news-content__left')
-            text = content.text
-            document.text = text
-        except Exception as e:
-            self.logger.error(e)
-            return
-
-        try:
+            # Важные данные
+            self._initial_access_source(url, 3)
             intro = self.driver.find_element(By.CLASS_NAME, 'page-banner-news__intro')
-            title = intro.find_element(By.TAG_NAME, 'h1').text
-            document.title = title
+            _title = intro.find_element(By.TAG_NAME, 'h1').text
 
+            _subtitle = intro.find_element(By.CLASS_NAME, 'subtitle')
             date = intro.find_element(By.CLASS_NAME, 'subtitle').text
             d1 = date.split('\n')[1]
             d2 = re.match(r'([\d \w]*) |.*', d1).groups()[0]
-            t = dateutil.parser.parse(d2)
-            document.pub_date = t
+            _published = dateutil.parser.parse(d2)
         except Exception as e:
-            self.logger.error(e)
-            return
+            raise NoSuchElementException(
+                'Страница не открывается или ошибка получения обязательных полей') from e
+        else:
+            document = SPP_document(
+                None,
+                _title,
+                None,
+                None,
+                url,
+                None,
+                None,
+                _published,
+                datetime.datetime.now()
+            )
+            try:
+                _category = _subtitle.find_element(By.XPATH, 'div[1]').text
+                if _category:
+                    document.other_data = {'category': _category.replace(',', '')}
+            except:
+                self.logger.debug('There aren\'t a category in the page')
 
-        self.logger.info(self._find_document_text_for_logger(document))
-        self._content_document.append(document)
+            _text = self.driver.find_element(By.CLASS_NAME, 'news-content__left').text
+            document.text = _text
+            self.find_document(document)
 
     def _initial_access_source(self, url: str, delay: int = 2):
         self.driver.get(url)
@@ -197,3 +192,16 @@ class SWIFT:
         :rtype:
         """
         return f"Find document | name: {doc.title} | link to web: {doc.web_link} | publication date: {doc.pub_date}"
+
+    def find_document(self, _doc: SPP_document):
+        """
+        Метод для обработки найденного документа источника
+        """
+        if self._last_document and self._last_document.hash == _doc.hash:
+            raise Exception(f"Find already existing document ({self._last_document})")
+
+        self._content_document.append(_doc)
+        self.logger.info(self._find_document_text_for_logger(_doc))
+
+        if self._max_count_documents and len(self._content_document) >= self._max_count_documents:
+            raise Exception(f"Max count articles reached ({self._max_count_documents})")
