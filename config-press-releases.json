@@ -15,7 +15,9 @@
 "middleware": {
     "modules": [
         { "order": 1, "name": "TimezoneSafeControl", "critical": true, "params": {}},
-        { "order": 2, "name": "CutJunkCharactersFromDocumentText", "critical": true, "params": {}},
+        { "order": 2, "name": "CutJunkCharactersFromDocumentText", "critical": true, "params": {
+            "fields": ["text", "abstract"]
+        }},
         { "order": 3, "name": "FilterOnlyNewDocumentWithDB", "critical": true, "params": {}},
         { "order": 4, "name": "SaveDocumentToDB", "critical": true, "params": {}}
     ],
